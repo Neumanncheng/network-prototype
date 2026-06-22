@@ -113,3 +113,99 @@
 }
 .an-anomaly-reason { display: block; font-size: 10px; color: #e2e8f0; line-height: 1.4; }
 .an-anomaly-meta { display: block; font-size: 9px; color: #64748b; margin-top: 2px; }
+
+/* Description text */
+.an-desc { font-size: 10px; color: #64748b; margin-bottom: 8px; line-height: 1.4; }
+
+/* Input rows for BFS / Dijkstra */
+.an-input-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.an-input {
+  flex: 1;
+  min-width: 80px;
+  padding: 6px 8px;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 11px;
+  outline: none;
+}
+.an-input:focus { border-color: #3b82f6; }
+.an-input-sm { max-width: 50px; text-align: center; }
+.an-input-btn {
+  padding: 6px 10px;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  background: #1e3a5f;
+  color: #93c5fd;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.an-input-btn:hover:not(:disabled) { background: #1e40af; }
+.an-input-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Badge */
+.an-badge {
+  display: inline-flex;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  background: #1e293b;
+  color: #94a3b8;
+}
+.an-badge-depth { background: #1e3a5f; color: #93c5fd; }
+
+/* BFS levels */
+.an-bfs-level {
+  margin-top: 8px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 8px;
+}
+.an-bfs-level-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Dijkstra steps */
+.an-dj-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.an-dj-step {
+  padding: 6px 8px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+}
+.an-dj-step-nodes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.an-dj-node { font-weight: 600; color: #e2e8f0; }
+.an-dj-arrow { color: #3b82f6; font-weight: bold; }
+.an-dj-step-meta {
+  display: flex;
+  gap: 6px;
+  margin-top: 3px;
+  align-items: center;
+  flex-wrap: wrap;
+}

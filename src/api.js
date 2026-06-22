@@ -7,12 +7,7 @@
  *   2. Auto-detect for local dev
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || (() => {
-  const host = window.location.hostname;
-  if (host === 'localhost' || host === '127.0.0.1') return `http://${host}:8000/api`;
-  // Production: backend served from same domain via reverse proxy, or subdomain
-  return `https://${host}/api`;
-})();
+const API_BASE = 'https://opposed-chip-relations-syndicate.trycloudflare.com/api';
 
 let _token = localStorage.getItem('na_token') || null;
 
@@ -78,6 +73,11 @@ export const api = {
   getPatterns: () => fetchJSON('/analytics/patterns'),
   findPath: (source, target, maxDepth = 4) =>
     fetchJSON(`/analytics/path?source=${source}&target=${target}&max_depth=${maxDepth}`),
+  dijkstraPath: (source, target) =>
+    fetchJSON(`/analytics/path/dijkstra?source=${source}&target=${target}`),
+  bfsExpand: (seed, maxDepth = 3, direction = 'both') =>
+    fetchJSON(`/analytics/bfs?seed=${seed}&max_depth=${maxDepth}&direction=${direction}`),
+  getSharedComponents: () => fetchJSON('/analytics/components/shared-identifiers'),
   getTemporal: () => fetchJSON('/analytics/temporal'),
 
   // ── Risk ─────────────────────────────────────────

@@ -77,6 +77,7 @@ export default function NodeDetail({ node, onClose }) {
       {/* Attributes */}
       <table className="nd-table">
         <tbody>
+          <tr><td className="nd-key">Node ID</td><td className="nd-val nd-mono" style={{ fontSize: 11 }}>{node.id}</td></tr>
           {node.country && <tr><td className="nd-key">Country</td><td className="nd-val">{node.country}</td></tr>}
           {node.bank && <tr><td className="nd-key">Bank</td><td className="nd-val">{node.bank}</td></tr>}
           {node.idType && <tr><td className="nd-key">ID Type</td><td className="nd-val">{node.idType}</td></tr>}

@@ -2,8 +2,10 @@
 Graph analytics powered by NetworkX — real implementations of:
   - Centrality (degree, betweenness, PageRank)
   - Community detection (Louvain, label propagation)
+  - Connected components (by shared attributes)
   - Pattern detection (fan-in, fan-out, cycles)
-  - Path analysis (shortest path, all simple paths)
+  - Path analysis (shortest path, all simple paths, Dijkstra risk-weighted)
+  - BFS expansion from seed nodes
   - Temporal analysis (frequency anomalies)
 """
 
@@ -244,6 +246,250 @@ class AnalyticsService:
                 "length": len(path) - 1,
             })
         return result
+
+    # ── Connected Components (by shared IP, phone, address) ─────
+
+    def connected_components(self, edge_types: Optional[List[str]] = None) -> List[Dict]:
+        """
+        Find weakly connected components, optionally filtered by edge types.
+        e.g. edge_types=["shared_ip","shared_phone","shared_address"]
+        finds groups of clients tied by shared identifiers.
+        """
+        g = self._engine.nx_graph
+        if g.number_of_nodes() == 0:
+            return []
+
+        if edge_types:
+            # Build a subgraph with only the specified edge types
+            h = nx.Graph()
+            for u, v, d in g.edges(data=True):
+                if d.get("type") in edge_types:
+                    h.add_edge(u, v)
+            # Add isolated nodes too
+            for n in g.nodes:
+                if n not in h:
+                    h.add_node(n)
+        else:
+            h = g.to_undirected()
+
+        components = list(nx.connected_components(h))
+        result = []
+        for i, comp in enumerate(components):
+            members = []
+            for nid in comp:
+                attrs = self._engine.get_node(nid) or {}
+                members.append({
+                    "id": nid,
+                    "label": attrs.get("label", nid),
+                    "type": attrs.get("type", "unknown"),
+                    "risk_score": attrs.get("risk_score", 0),
+                })
+            # Sort by risk score descending
+            members.sort(key=lambda m: m["risk_score"], reverse=True)
+            avg_risk = round(sum(m["risk_score"] for m in members) / max(len(members), 1), 1)
+
+            # Categorise
+            customer_count = sum(1 for m in members if m["type"] == "customer")
+            account_count = sum(1 for m in members if m["type"] == "account")
+            external_count = sum(1 for m in members if m["type"] == "external")
+            ip_count = sum(1 for m in members if m["type"] == "ip")
+
+            result.append({
+                "component_id": i + 1,
+                "size": len(members),
+                "avg_risk_score": avg_risk,
+                "max_risk_score": max((m["risk_score"] for m in members), default=0),
+                "composition": {
+                    "customers": customer_count,
+                    "accounts": account_count,
+                    "external_entities": external_count,
+                    "ip_addresses": ip_count,
+                },
+                "members": members,
+            })
+
+        result.sort(key=lambda c: c["size"], reverse=True)
+        return result
+
+    # ── BFS Expansion ───────────────────────────────────────────
+
+    def bfs_expand(self, seed_id: str, max_depth: int = 3,
+                   direction: str = "both") -> Dict[str, Any]:
+        """
+        Breadth-first search outward from a seed node.
+        direction: "forward" (outgoing), "backward" (incoming), or "both"
+        """
+        g = self._engine.nx_graph
+        if seed_id not in g:
+            return {"error": f"Node {seed_id} not found"}
+
+        seed_attrs = self._engine.get_node(seed_id) or {}
+
+        visited: Dict[str, int] = {seed_id: 0}  # node_id -> depth
+        queue: List[tuple] = [(seed_id, 0)]
+        levels: Dict[int, List[str]] = {0: [seed_id]}
+
+        while queue:
+            current, depth = queue.pop(0)
+            if depth >= max_depth:
+                continue
+
+            neighbors = []
+            if direction in ("forward", "both"):
+                neighbors.extend(g.successors(current))
+            if direction in ("backward", "both"):
+                neighbors.extend(g.predecessors(current))
+
+            for nb in neighbors:
+                if nb not in visited:
+                    visited[nb] = depth + 1
+                    queue.append((nb, depth + 1))
+                    levels.setdefault(depth + 1, []).append(nb)
+
+        # Build result per level
+        expansion = []
+        edge_count = 0
+        for d in range(1, max_depth + 1):
+            level_nodes = levels.get(d, [])
+            if not level_nodes:
+                continue
+            node_details = []
+            for nid in level_nodes:
+                attrs = self._engine.get_node(nid) or {}
+                node_details.append({
+                    "id": nid,
+                    "label": attrs.get("label", nid),
+                    "type": attrs.get("type", "unknown"),
+                    "risk_score": attrs.get("risk_score", 0),
+                })
+                # Count edges connecting to previous level
+                for pred in g.predecessors(nid):
+                    if visited.get(pred, 99) == d - 1:
+                        edge_count += 1
+                for succ in g.successors(nid):
+                    if visited.get(succ, 99) == d - 1:
+                        edge_count += 1
+
+            expansion.append({
+                "depth": d,
+                "node_count": len(level_nodes),
+                "nodes": node_details,
+            })
+
+        return {
+            "seed_id": seed_id,
+            "seed_label": seed_attrs.get("label", seed_id),
+            "seed_type": seed_attrs.get("type", "unknown"),
+            "max_depth": max_depth,
+            "direction": direction,
+            "total_reached": len(visited) - 1,
+            "total_edges_traversed": edge_count,
+            "expansion": expansion,
+        }
+
+    # ── Dijkstra (Risk-Weighted Shortest Path) ────────────────────
+
+    def dijkstra_risk_path(self, source: str, target: str) -> Optional[Dict]:
+        """
+        Find the lowest-risk path between two nodes.
+        Edge weights are derived from risk:
+          - transaction amount / ownership → higher weight = riskier
+          - shared attribute edges → weight = avg(source_risk, target_risk) * 0.5
+          - llm_discovered → weight = 1 - confidence (lower confidence = higher weight)
+        """
+        g = self._engine.nx_graph
+        if source not in g:
+            return {"error": f"Source {source} not found"}
+        if target not in g:
+            return {"error": f"Target {target} not found"}
+
+        # Build a weighted undirected graph for Dijkstra
+        h = nx.Graph()
+
+        # Add all nodes
+        for n in g.nodes:
+            h.add_node(n)
+
+        # Add edges with risk-based weights
+        for u, v, d in g.edges(data=True):
+            edge_type = d.get("type", "unknown")
+
+            if edge_type == "transaction":
+                amount = d.get("amount", 0)
+                # Higher amount = higher risk weight, normalised
+                weight = min(100.0, amount / 10000) if amount else 10.0
+            elif edge_type == "ownership":
+                pct = d.get("percentage", 0)
+                weight = max(5.0, pct)  # at least 5
+            elif edge_type in ("shared_ip", "shared_phone", "shared_address", "shared_email", "shared_device"):
+                src_risk = g.nodes[u].get("risk_score", 0) or 50
+                tgt_risk = g.nodes[v].get("risk_score", 0) or 50
+                weight = max(1.0, (src_risk + tgt_risk) / 2 * 0.3)
+            elif edge_type == "llm_discovered":
+                confidence = d.get("confidence", 0.5)
+                weight = max(1.0, (1 - confidence) * 20)
+            else:
+                weight = 5.0
+
+            h.add_edge(u, v, weight=round(weight, 2))
+
+        try:
+            path = nx.dijkstra_path(h, source=source, target=target, weight="weight")
+            total_weight = nx.dijkstra_path_length(h, source=source, target=target, weight="weight")
+        except (nx.NodeNotFound, nx.NetworkXNoPath):
+            return None
+
+        nodes = []
+        for nid in path:
+            attrs = self._engine.get_node(nid) or {}
+            nodes.append({
+                "id": nid,
+                "label": attrs.get("label", nid),
+                "type": attrs.get("type", "unknown"),
+                "risk_score": attrs.get("risk_score", 0),
+            })
+
+        edges = []
+        for i in range(len(path) - 1):
+            u, v = path[i], path[i + 1]
+            if g.has_edge(u, v):
+                ed = self._engine.get_edge(u, v)
+            elif g.has_edge(v, u):
+                ed = self._engine.get_edge(v, u)
+            else:
+                ed = None
+            edge_data = {"source": u, "target": v, "type": "unknown"}
+            if ed:
+                # Recalculate the weight
+                edge_type = ed.get("type", "unknown")
+                if edge_type == "transaction" and ed.get("amount"):
+                    w = min(100.0, ed["amount"] / 10000)
+                elif edge_type == "ownership" and ed.get("percentage"):
+                    w = max(5.0, ed["percentage"])
+                elif edge_type in ("shared_ip", "shared_phone", "shared_address", "shared_email", "shared_device"):
+                    src_r = g.nodes[u].get("risk_score", 0) or 50
+                    tgt_r = g.nodes[v].get("risk_score", 0) or 50
+                    w = max(1.0, (src_r + tgt_r) / 2 * 0.3)
+                elif edge_type == "llm_discovered":
+                    conf = ed.get("confidence", 0.5)
+                    w = max(1.0, (1 - conf) * 20)
+                else:
+                    w = 5.0
+                edge_data = {"source": u, "target": v, "type": edge_type, "weight": round(w, 2)}
+                if ed.get("amount"): edge_data["amount"] = ed["amount"]
+                if ed.get("currency"): edge_data["currency"] = ed["currency"]
+                if ed.get("date"): edge_data["date"] = ed["date"]
+            edges.append(edge_data)
+
+        return {
+            "source": source,
+            "target": target,
+            "path": [n["id"] for n in nodes],
+            "nodes": nodes,
+            "edges": edges,
+            "length": len(path) - 1,
+            "total_risk_weight": round(total_weight, 2),
+        }
 
     # ── Temporal Analysis ───────────────────────────────────────
 
